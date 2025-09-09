@@ -1,0 +1,29 @@
+{
+  "name": "vemcomigo-backend",
+  "version": "1.0.0",
+  "description": "Repositorio dedicado ao Backend da pagina",
+  "main": "index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vem-Comigo/vemcomigo-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Vem-Comigo/vemcomigo-backend/issues"
+  },
+  "homepage": "https://github.com/Vem-Comigo/vemcomigo-backend#readme",
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
