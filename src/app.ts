@@ -1,15 +1,34 @@
 import express from "express";
-import type { ErrorRequestHandler } from "express";
+import type { ErrorRequestHandler, RequestHandler } from "express";
 import { validateContact } from "./contact/validation";
 import { contactRateLimit } from "./contact/rateLimit";
 import type { MailSender } from "./contact/mail";
+import { createMailSender } from "./contact/mail";
+import {
+  createSharedLimiter,
+  isProxySecret,
+  proxyAuthenticated,
+  sharedRateLimit,
+} from "./contact/sharedRateLimit";
+import { env } from "./config/env";
 
 export interface AppOptions {
   origin: string;
   sendMail?: MailSender | undefined;
+  serverless?: boolean;
+  proxyKey?: string;
+  limiter?: RequestHandler;
 }
 
-export function createApp({ origin, sendMail }: AppOptions) {
+export function createApp({
+  origin,
+  sendMail,
+  serverless = false,
+  proxyKey = "",
+  limiter,
+}: AppOptions) {
+  const limitContact =
+    limiter ?? (serverless ? sharedRateLimit() : contactRateLimit());
   if (new URL(origin).origin !== origin)
     throw new Error(
       "CONTACT_ORIGIN deve conter somente a origem, sem caminho ou barra final.",
@@ -36,8 +55,8 @@ export function createApp({ origin, sendMail }: AppOptions) {
   });
   app.post(
     "/api/contact",
-    contactRateLimit(),
     (req, res, next) => {
+      res.locals.receivedAt = new Date();
       // JSON + origem exata: sem cookies de autenticação e sem CORS público.
       if (req.get("origin") !== origin) {
         res.status(403).json({ error: "Origem não permitida." });
@@ -47,8 +66,21 @@ export function createApp({ origin, sendMail }: AppOptions) {
         res.status(415).json({ error: "Formato inválido." });
         return;
       }
+      if (serverless) {
+        if (!isProxySecret(proxyKey)) {
+          res
+            .status(503)
+            .json({ error: "Contato temporariamente indisponível." });
+          return;
+        }
+        if (!proxyAuthenticated(req, proxyKey)) {
+          res.status(403).json({ error: "Solicitação não permitida." });
+          return;
+        }
+      }
       next();
     },
+    limitContact,
     express.json({ limit: "16kb", strict: true }),
     async (req, res) => {
       const data = validateContact(req.body);
@@ -63,7 +95,7 @@ export function createApp({ origin, sendMail }: AppOptions) {
         return;
       }
       try {
-        await sendMail(data);
+        await sendMail(data, res.locals.receivedAt as Date);
         res.status(202).json({ accepted: true });
       } catch {
         // Não registrar corpo, dados pessoais, credenciais ou resposta do provedor.
@@ -91,3 +123,20 @@ export function createApp({ origin, sendMail }: AppOptions) {
   app.use(handleError);
   return app;
 }
+
+// A Vercel reconhece src/app.ts com export default como aplicação Express.
+// A fábrica acima continua disponível para testes, sem disparar chamadas externas.
+export default createApp({
+  origin: env.contactOrigin,
+  sendMail: createMailSender({ apiKey: env.mailApiKey, from: env.mailFrom }),
+  serverless: env.serverless,
+  proxyKey: env.proxyKey,
+  limiter: env.serverless
+    ? sharedRateLimit(
+        createSharedLimiter({
+          url: env.rateLimitUrl,
+          token: env.rateLimitToken,
+        }),
+      )
+    : contactRateLimit(),
+});

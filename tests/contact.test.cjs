@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { once } = require("node:events");
 const { createApp } = require("../dist/app");
 const { validateContact } = require("../dist/contact/validation");
-const { createMailSender } = require("../dist/contact/mail");
+const { createMailSender, CONTACT_RECIPIENT } = require("../dist/contact/mail");
 const { contactRateLimit } = require("../dist/contact/rateLimit");
 
 const origin = "http://localhost:5173";
@@ -160,10 +160,10 @@ test("adaptador fixa destinatário, usa texto e exige ID do provedor", async () 
   const send = createMailSender(config, async (url, options) => {
     assert.equal(url, "https://api.resend.com/emails");
     const body = JSON.parse(options.body);
-    assert.deepEqual(body.to, [config.to]);
-    assert.equal(body.from, config.from);
+    assert.deepEqual(body.to, [CONTACT_RECIPIENT]);
+    assert.equal(body.from, `Vem Comigo <${config.from}>`);
     assert.equal(body.reply_to, valid.email);
-    assert.equal(body.html, undefined);
+    assert.ok(body.html.includes("Nova solicitação"));
     assert.ok(body.text.includes(valid.message));
     return Response.json({ id: "fake-confirmation" });
   });

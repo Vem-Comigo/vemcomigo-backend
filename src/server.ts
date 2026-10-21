@@ -1,19 +1,12 @@
-import { createApp } from "./app";
+import app from "./app";
 import { env } from "./config/env";
-import { createMailSender } from "./contact/mail";
 
 if (!Number.isInteger(env.port) || env.port < 1 || env.port > 65535)
   throw new Error("PORT inválida.");
-const sendMail = createMailSender({
-  apiKey: env.mailApiKey,
-  from: env.mailFrom,
-  to: env.mailTo,
-});
-if (!sendMail)
+if (!env.mailApiKey || !env.mailFrom)
   console.warn(
-    "Contato indisponível: configure MAIL_API_KEY, MAIL_FROM e MAIL_TO no servidor.",
+    "Contato indisponível: configure MAIL_API_KEY e MAIL_FROM no servidor.",
   );
-const app = createApp({ origin: env.contactOrigin, sendMail });
 const server = app.listen(env.port, () => {
   console.log(`Servidor iniciado na porta ${env.port}.`);
 });
