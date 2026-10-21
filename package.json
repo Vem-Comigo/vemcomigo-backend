@@ -4,7 +4,11 @@
   "description": "Repositorio dedicado ao Backend da pagina",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "npm run build && node --test tests/*.test.cjs"
   },
   "repository": {
     "type": "git",
@@ -21,7 +25,7 @@
     "@types/express": "^5.0.3",
     "@types/mongoose-sequence": "^3.0.11",
     "@types/node": "^24.3.1",
-    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.2"
   },
   "dependencies": {
