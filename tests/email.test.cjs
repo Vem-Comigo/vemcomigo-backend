@@ -21,7 +21,7 @@ const data = {
   message: "Olá, equipe!\nSegunda linha com acentos: ação e convivência.",
 };
 const received = new Date("2026-10-21T15:30:00Z");
-const mailConfig = { apiKey: "fake-key", from: "portal@example.invalid" };
+const mailConfig = { user: CONTACT_RECIPIENT, appPassword: "abcdefghijklmnop" };
 const proxyKey = "fictitious-test-secret-with-32-characters-minimum";
 const clientId = "a".repeat(64);
 
@@ -115,22 +115,37 @@ test("validação aceita opcionais vazios e 3000 caracteres, bloqueia parâmetro
     null,
   );
 });
-test("adaptador ignora destinatário externo, não envia confirmação e preserva Reply-To", async () => {
-  let calls = 0;
+
+test("SMTP fixa cabeçalhos e envelope, preserva template, data e Reply-To", async () => {
+  let calls = 0,
+    factories = 0;
   const send = createMailSender(
-    { ...mailConfig, to: "atacante@example.invalid" },
-    async (_url, options) => {
-      calls++;
-      const body = JSON.parse(options.body);
-      assert.deepEqual(body.to, [CONTACT_RECIPIENT]);
-      assert.equal(body.reply_to, data.email);
-      assert.equal(body.from, "Vem Comigo <portal@example.invalid>");
-      assert.equal(body.cc, undefined);
-      assert.equal(body.bcc, undefined);
-      assert.ok(body.html.includes("12:30:00"));
-      assert.ok(body.text.includes("12:30:00"));
-      assert.equal(options.redirect, "error");
-      return Response.json({ id: "fictitious-provider-id" });
+    {
+      ...mailConfig,
+      to: "atacante@example.invalid",
+      from: "atacante@example.invalid",
+    },
+    () => {
+      factories++;
+      return {
+        async sendMail(body) {
+          calls++;
+          assert.equal(body.to, CONTACT_RECIPIENT);
+          assert.equal(body.replyTo, data.email);
+          assert.equal(body.from, '"Vem Comigo" <' + CONTACT_RECIPIENT + ">");
+          assert.equal(body.cc, undefined);
+          assert.equal(body.bcc, undefined);
+          assert.deepEqual(body.envelope.to, [CONTACT_RECIPIENT]);
+          assert.ok(body.html.includes("12:30:00"));
+          assert.ok(body.text.includes("12:30:00"));
+          return {
+            accepted: [CONTACT_RECIPIENT],
+            rejected: [],
+            response: "250 2.0.0 OK",
+          };
+        },
+        close() {},
+      };
     },
   );
   await send(data, received);
@@ -138,34 +153,85 @@ test("adaptador ignora destinatário externo, não envia confirmação e preserv
   await assert.rejects(
     send({ ...data, email: "x@example.invalid\r\nBcc: x@example.org" }),
   );
+  assert.equal(factories, 1);
 });
-test("timeout do provedor aborta sem repetir o envio", async () => {
-  let calls = 0;
+
+test("deadline SMTP destrói socket e fecha transporte sem repetir ou aceitar resposta tardia", async () => {
+  let calls = 0,
+    closes = 0,
+    socket,
+    finish;
   const send = createMailSender(
     mailConfig,
-    async (_url, { signal }) => {
-      calls++;
-      return new Promise((_resolve, reject) => {
-        const keepAlive = setTimeout(
-          () => reject(new Error("Timeout não aplicado")),
-          100,
-        );
-        signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(keepAlive);
-            reject(signal.reason);
-          },
-          { once: true },
-        );
-      });
+    (options) => {
+      socket = options.socket;
+      return {
+        sendMail() {
+          calls++;
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        },
+        close() {
+          closes++;
+        },
+      };
     },
     () => received,
     5,
   );
   await assert.rejects(send(data), (error) => error.name === "TimeoutError");
+  assert.equal(socket.destroyed, true);
+  assert.equal(calls, 1);
+  assert.equal(closes, 1);
+  finish({ accepted: [CONTACT_RECIPIENT], response: "250 OK" });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 1);
 });
+
+test("falhas SMTP de autenticação/conexão/rejeição fecham recursos sem retry", async () => {
+  for (const code of ["EAUTH", "ECONNECTION", "EENVELOPE", "ETIMEDOUT"]) {
+    let calls = 0,
+      closes = 0,
+      socket;
+    const send = createMailSender(mailConfig, (options) => {
+      socket = options.socket;
+      return {
+        async sendMail() {
+          calls++;
+          throw Object.assign(new Error("private detail"), { code });
+        },
+        close() {
+          closes++;
+        },
+      };
+    });
+    await assert.rejects(send(data));
+    assert.equal(calls, 1);
+    assert.equal(closes, 1);
+    assert.equal(socket.destroyed, true);
+  }
+});
+
+test("senha de app em grupos é normalizada somente na memória", async () => {
+  let calls = 0;
+  const send = createMailSender(
+    { ...mailConfig, appPassword: "abcd efgh ijkl mnop" },
+    (options) => {
+      assert.equal(options.auth.pass, "abcdefghijklmnop");
+      return {
+        async sendMail() {
+          calls++;
+          return { accepted: [CONTACT_RECIPIENT], response: "250 OK" };
+        },
+        close() {},
+      };
+    },
+  );
+  await send(data);
+  assert.equal(calls, 1);
+});
+
 test("limite compartilhado usa chave sem IP bruto e operação atômica com expiração", async () => {
   let count = 4;
   const mock = async (_url, options) => {

@@ -151,33 +151,129 @@ test("limitador libera novamente após janela expirar", () => {
   limit(req, res, () => next++);
   assert.equal(next, 6);
 });
-test("adaptador fixa destinatário, usa texto e exige ID do provedor", async () => {
-  const config = {
-    apiKey: "fake-test-key",
-    from: "portal@example.org",
-    to: "equipe@example.org",
-  };
-  const send = createMailSender(config, async (url, options) => {
-    assert.equal(url, "https://api.resend.com/emails");
-    const body = JSON.parse(options.body);
-    assert.deepEqual(body.to, [CONTACT_RECIPIENT]);
-    assert.equal(body.from, `Vem Comigo <${config.from}>`);
-    assert.equal(body.reply_to, valid.email);
-    assert.ok(body.html.includes("Nova solicitação"));
-    assert.ok(body.text.includes(valid.message));
-    return Response.json({ id: "fake-confirmation" });
+
+test("API aguarda SMTP e não expõe falha de autenticação", async () => {
+  let accept;
+  let started;
+  const sending = new Promise((resolve) => {
+    started = resolve;
+  });
+  const sendMail = createMailSender(
+    { user: CONTACT_RECIPIENT, appPassword: "abcdefghijklmnop" },
+    () => ({
+      sendMail() {
+        started();
+        return new Promise((resolve) => {
+          accept = resolve;
+        });
+      },
+      close() {},
+    }),
+  );
+  await withApp({ sendMail }, async (post) => {
+    let finished = false;
+    const pending = post().then((response) => {
+      finished = true;
+      return response;
+    });
+    await sending;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(finished, false);
+    accept({ accepted: [CONTACT_RECIPIENT], rejected: [], response: "250 OK" });
+    assert.equal((await pending).status, 202);
+  });
+  await withApp(
+    {
+      sendMail: createMailSender(
+        { user: CONTACT_RECIPIENT, appPassword: "abcdefghijklmnop" },
+        () => ({
+          async sendMail() {
+            throw new Error("EAUTH private SMTP detail");
+          },
+          close() {},
+        }),
+      ),
+    },
+    async (post) => {
+      const response = await post();
+      assert.equal(response.status, 502);
+      assert.doesNotMatch(await response.text(), /EAUTH|private|SMTP|accepted/);
+    },
+  );
+});
+
+test("SMTP exige conta fixa, senha de app e aceitação após DATA", async () => {
+  const config = { user: CONTACT_RECIPIENT, appPassword: "abcdefghijklmnop" };
+  let options,
+    message,
+    closed = 0;
+  const send = createMailSender(config, (settings) => {
+    options = settings;
+    return {
+      async sendMail(body) {
+        message = body;
+        return {
+          accepted: [CONTACT_RECIPIENT],
+          rejected: [],
+          response: "250 2.0.0 OK",
+        };
+      },
+      close() {
+        closed++;
+      },
+    };
   });
   await send(valid);
-  assert.equal(
-    createMailSender({ ...config, from: "a@example.org\r\nBcc:b@example.org" }),
-    undefined,
-  );
-  assert.equal(createMailSender({ ...config, apiKey: "" }), undefined);
-  for (const response of [
-    Response.json({}, { status: 200 }),
-    Response.json({ id: "fake" }, { status: 429 }),
-    new Response("invalid"),
+  assert.equal(options.host, "smtp.gmail.com");
+  assert.equal(options.port, 465);
+  assert.equal(options.secure, true);
+  assert.equal(options.tls.rejectUnauthorized, true);
+  assert.equal(options.tls.minVersion, "TLSv1.2");
+  assert.equal(options.logger, false);
+  assert.equal(options.debug, false);
+  assert.equal(options.disableFileAccess, true);
+  assert.equal(options.disableUrlAccess, true);
+  assert.equal(options.connectionTimeout, 10000);
+  assert.equal(options.socket.destroyed, true);
+  assert.equal(message.to, CONTACT_RECIPIENT);
+  assert.equal(message.from, '"Vem Comigo" <' + CONTACT_RECIPIENT + ">");
+  assert.equal(message.replyTo, valid.email);
+  assert.deepEqual(message.envelope, {
+    from: CONTACT_RECIPIENT,
+    to: [CONTACT_RECIPIENT],
+  });
+  assert.ok(message.html.includes("Nova solicitação"));
+  assert.ok(message.text.includes(valid.message));
+  assert.equal(closed, 1);
+  for (const invalid of [
+    { ...config, user: "other@gmail.com" },
+    { ...config, user: "" },
+    { ...config, user: CONTACT_RECIPIENT + "\r\nBcc: x@example.org" },
+    { ...config, appPassword: "" },
+    { ...config, appPassword: "short" },
+    { ...config, appPassword: "abcdefghijklmnop\n" },
+  ])
+    assert.equal(createMailSender(invalid), undefined);
+  for (const result of [
+    { accepted: [], rejected: [], response: "250 OK" },
+    { accepted: [CONTACT_RECIPIENT], rejected: [], response: "354 Continue" },
+    {
+      accepted: [CONTACT_RECIPIENT],
+      rejected: [CONTACT_RECIPIENT],
+      response: "250 OK",
+    },
+    { accepted: ["other@gmail.com"], response: "250 OK" },
+    {},
   ]) {
-    await assert.rejects(createMailSender(config, async () => response)(valid));
+    let released = false;
+    await assert.rejects(
+      createMailSender(config, () => ({
+        sendMail: async () => result,
+        close() {
+          released = true;
+        },
+      }))(valid),
+    );
+    assert.equal(released, true);
   }
 });

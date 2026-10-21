@@ -128,7 +128,10 @@ export function createApp({
 // A fábrica acima continua disponível para testes, sem disparar chamadas externas.
 export default createApp({
   origin: env.contactOrigin,
-  sendMail: createMailSender({ apiKey: env.mailApiKey, from: env.mailFrom }),
+  sendMail: createMailSender({
+    user: env.smtpUser,
+    appPassword: env.smtpAppPassword,
+  }),
   serverless: env.serverless,
   proxyKey: env.proxyKey,
   limiter: env.serverless

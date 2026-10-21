@@ -3,9 +3,9 @@ import { env } from "./config/env";
 
 if (!Number.isInteger(env.port) || env.port < 1 || env.port > 65535)
   throw new Error("PORT inválida.");
-if (!env.mailApiKey || !env.mailFrom)
+if (!env.smtpUser || !env.smtpAppPassword)
   console.warn(
-    "Contato indisponível: configure MAIL_API_KEY e MAIL_FROM no servidor.",
+    "Contato indisponível: configure SMTP_USER e SMTP_APP_PASSWORD no servidor.",
   );
 const server = app.listen(env.port, () => {
   console.log(`Servidor iniciado na porta ${env.port}.`);
