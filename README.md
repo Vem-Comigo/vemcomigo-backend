@@ -1,10 +1,10 @@
-# Vem Comigo — contato institucional
+# Vem Comigo — envio institucional
 
-API Express 5 + TypeScript. O portal usa somente os endpoints de saúde e contato. Não há login, cadastro, armazenamento de mensagens ou conexão automática com MongoDB. Os arquivos de banco herdados permanecem no repositório, sem integrar o fluxo institucional.
+API Express 5 + TypeScript, preparada para Vercel. O formulário envia somente para **contatovmc3567@gmail.com**, fixado no servidor. Resend é o serviço já existente, mantido com `fetch` nativo, HTML e texto simples. O e-mail do visitante é Reply-To; o remetente é o endereço autorizado configurado pela instituição. Não há confirmação automática ao visitante.
 
 ## Executar
 
-Requisito: **Node.js 24 LTS** e npm.
+Requisito: Node.js 24 e npm. No PowerShell, usar `npm.cmd` se a política impedir `npm.ps1`.
 
 ```powershell
 cd vemcomigo-backend
@@ -13,7 +13,7 @@ Copy-Item .env.example .env
 npm.cmd run dev
 ```
 
-API em `http://localhost:3000`. `GET /api/health` responde `{ "status": "ok" }`. A ausência de credenciais mantém o servidor funcionando e o contato responde **503**, sem enviar mensagem.
+Iniciar também o front-end e abrir `http://localhost:5173`. Sem credenciais, o backend continua respondendo a `/api/health`, mas o contato retorna 503. Não há sucesso simulado. Nunca compartilhar o conteúdo de `.env` ou registrar mensagens completas.
 
 ```powershell
 npm.cmd run typecheck
@@ -22,37 +22,56 @@ npm.cmd run build
 npm.cmd start
 ```
 
-Não há linter configurado neste repositório. Os testes nativos do Node usam servidor efêmero e adaptadores falsos; **não enviam e-mails reais**. O observador `tsx` substitui `ts-node-dev`, cuja dependência transitiva apresentava vulnerabilidade sem correção compatível. O lockfile passou a ser versionado para instalação reproduzível.
+Os testes usam mocks e não enviam e-mails. Não há linter configurado neste repositório. Os arquivos de banco herdados permanecem sem conexão automática ou participação no contato.
 
-## Configuração privada
+## Configuração
 
-| Variável | Uso |
-| --- | --- |
-| `PORT` | Porta da API, padrão 3000 |
-| `CONTACT_ORIGIN` | Origem exata do portal, padrão `http://localhost:5173`, sem caminho ou barra final |
-| `MAIL_API_KEY` | Chave privada Resend, somente no servidor |
-| `MAIL_FROM` | Um único endereço remetente de domínio verificado no provedor |
-| `MAIL_TO` | Um único destinatário institucional confirmado, fixado no servidor |
+| Variável | Local | Vercel/produção |
+| --- | --- | --- |
+| `PORT` | Padrão 3000 | Gerenciado pela plataforma |
+| `CONTACT_ORIGIN` | `http://localhost:5173` | Origem HTTPS exata do portal, sem barra final |
+| `MAIL_API_KEY` | Chave privada Resend para teste controlado | Chave privada de envio |
+| `MAIL_FROM` | Endereço autorizado pelo Resend | Endereço de domínio verificado |
+| `CONTACT_PROXY_KEY` | Para testar o proxy completo | Segredo aleatório de 32–256 caracteres, igual nos dois projetos |
+| `UPSTASH_REDIS_REST_URL` | Necessário ao simular produção | Endpoint HTTPS raiz do limitador compartilhado |
+| `UPSTASH_REDIS_REST_TOKEN` | Necessário ao simular produção | Token privado do limitador |
 
-O adaptador usa `fetch` nativo, sem SDK ou scripts no cliente. Contrato consultado: [Send Email — Resend](https://resend.com/docs/api-reference/emails/send-email). Não foram criados conta, domínio ou credenciais. Confirmar o provedor e suas condições com a instituição antes de habilitar o envio. Para outro serviço, substituir `src/contact/mail.ts` mantendo o contrato `MailSender`.
+Não existe configuração `MAIL_TO`: o destinatário não pode ser escolhido por requisição ou variável. `.env.example` não contém credenciais reais. `VERCEL=1` ou `NODE_ENV=production` exige proxy autenticado e limitação compartilhada, sem fallback em memória.
 
-O resultado **202 `{ "accepted": true }`** significa aceitação pelo serviço de envio, não comprovação de entrega ao destinatário. Timeout ou resposta sem confirmação retorna 502; não há repetição automática para evitar duplicação em casos incertos.
+O destino ser Gmail não autoriza o uso de Gmail como remetente. Para produção, verificar domínio controlado pela instituição no Resend e definir `MAIL_FROM` com um endereço desse domínio, sem nome de exibição. O código aplica `Vem Comigo <endereço>`. A restrição do remetente de teste Resend e o passo a passo completo estão no [guia do front-end no GitHub](https://github.com/Vem-Comigo/vemcomigo-frontend/blob/main/docs/contact-vercel.md); o arquivo correspondente está no checkout `../vemcomigo-frontend/docs/contact-vercel.md`. Esse link remoto só refletirá esta mudança após o push solicitado pelo usuário.
 
-## Proteções implementadas
+## Vercel e proteção
 
-- `POST /api/contact`: JSON de até 16 KB; validação independente de tipos, campos permitidos, obrigatoriedade, limites, interesse, telefone e e-mail. Honeypot deve estar vazio.
-- Origem exata obrigatória, sem CORS público e sem cookies de autenticação. Formatos simples externos são rejeitados. Isso reduz CSRF de navegador; não substitui controles contra bots capazes de forjar cabeçalhos.
-- Destinatário, remetente e assunto definidos no servidor. Resposta ao e-mail validado; CR/LF e caracteres de controle rejeitados nos campos de linha única. Corpo enviado como texto, nunca HTML do visitante.
-- Até 5 tentativas por IP em 15 minutos, com `Retry-After`; entradas expiram e o mapa tem limite de tamanho. O limitador em memória é por processo e perde o estado no reinício. Não persiste IPs em banco ou logs.
-- Sem log de mensagens, dados pessoais ou respostas internas do provedor. Falhas públicas genéricas. Respostas `no-store`, `nosniff`, `DENY`, CSP restritiva, Referrer-Policy e Permissions-Policy.
-- `.env` ignorado e `.env.example` apenas com campos vazios/padrões locais. Não retornar credenciais ao navegador.
+`src/app.ts` exporta a aplicação Express para o preset definido em `vercel.json`. `src/server.ts` serve o desenvolvimento local. Preservamos os repositórios separados: o projeto front-end possui `/api/contact`, que encaminha por HTTPS à API com segredo privado e identificador HMAC derivado da conexão. Configurar os dois projetos e a origem exata; não é necessário CORS público.
 
-## Infraestrutura e pendências
+O limite compartilhado usa Upstash Redis REST, sem SDK. Uma operação Lua atômica conta até 5 tentativas por identificador em uma janela de 900 segundos. A chave tem hash e expiração: não armazena corpo, nome, e-mail ou IP bruto do visitante. Falha/timeout/configuração ausente do limitador retorna 503 antes de enviar. O contador em memória só é usado no desenvolvimento local e não é proteção persistente.
 
-Servir o front-end e `/api` sob a mesma origem HTTPS e configurar `CONTACT_ORIGIN` com esse domínio. A API não expõe CORS: o navegador usa somente `/api/contact` do domínio do portal. Cabeçalhos do front-end dependem da hospedagem; ver README do front-end.
+Requisições são limitadas a 16 KB no proxy e no Express. O servidor valida tipos, campos permitidos, formatos, limites e honeypot. Campos internos extras são rejeitados. Mensagens são escapadas no HTML; cabeçalhos não aceitam CR/LF; credenciais, assunto e remetente não vêm do visitante. O corpo também tem alternativa em texto simples. Recebimento é datado no servidor e formatado em `America/Sao_Paulo`.
 
-`trust proxy` permanece **false** para não aceitar IP arbitrário em `X-Forwarded-For`. Atrás de proxy, o IP percebido poderá ser o do proxy, agrupando visitantes no mesmo limite. Antes de produção, definir os proxies confiáveis conforme a topologia real e testar, seguindo [Express behind proxies](https://expressjs.com/en/guide/behind-proxies/). Em múltiplas instâncias, aplicar limitação compartilhada no gateway/WAF. Ajustar limites globais, tamanho, timeouts e conexão na infraestrutura e acrescentar desafio antispam proporcional se o abuso justificar.
+Timeouts: limitador 2,5 s; Resend 10 s; proxy 16 s; cliente 20 s; funções configuradas com duração máxima de 20 s. Não há retries automáticos. 202 `{ "accepted": true }` significa aceitação pelo serviço, sem garantia de entrega na caixa de entrada. Timeout ou ausência de confirmação retorna erro e o cliente conserva os dados.
 
-HTTPS, HSTS, proxy confiável, limitação distribuída, destinatário, domínio verificado, credenciais, monitoração sem dados pessoais e política institucional para mensagens ainda dependem da infraestrutura/equipe. Não há promessa de segurança absoluta ou conformidade jurídica presumida. Não usar o portal para denúncias ou atendimento de urgência.
+Erros públicos são genéricos; não há logs de conteúdo ou respostas privadas do provedor. API usa `no-store`, `nosniff`, `DENY`, CSP restritiva, Referrer-Policy e Permissions-Policy. O navegador usa o domínio do portal; a API não libera CORS. `trust proxy` permanece false: o IP bruto não é aceito por cabeçalhos externos no Express. O identificador recebido em produção só é usado após autenticar o proxy.
 
-Nenhum push, envio real de teste ou deploy foi realizado.
+## Prévia do e-mail, sem envio
+
+```powershell
+npm.cmd run preview:email
+```
+
+Abre-se `.cache/email-preview/contato.html` no navegador; `.cache/email-preview/contato.txt` contém a alternativa em texto. Os dados são explicitamente fictícios e a data é fixa para revisão. Para servir a prévia:
+
+```powershell
+npm.cmd run preview:email -- --serve
+```
+
+Acessar `http://127.0.0.1:4174` ou `/texto`. Nenhuma credencial é necessária e o script não chama o Resend. A prévia não é incluída nos arquivos públicos do portal.
+
+O template preserva a identidade roxa/amarela já pesquisada para o portal e usa tabela de 600 px com largura fluida, estilos inline, Arial e moldura condicional para Outlook. Não depende de SVG, fontes externas, JavaScript ou imagens remotas. O `Banner Vem comigo.svg` fornecido permanece intacto no repositório de assets; o cabeçalho do e-mail é textual. Não foram inventados fotos ou depoimentos. A pesquisa complementar no Refero retornou padrões de confirmação em páginas, não provas de renderização em clientes de e-mail; a composição segue a identidade existente e as restrições deste pedido.
+
+## Entrega e pendências
+
+18 testes do backend e 11 do front-end passaram com mocks, mais tipos, builds e lint disponível no front-end. A prévia foi inspecionada no Edge em 760/360 px; os estados da interface foram testados com todas as chamadas interceptadas, sem envio real. Não foi validada a renderização nos aplicativos Gmail/Outlook, o build remoto autenticado na Vercel ou a entrega real.
+
+Ainda faltam contas/configurações privadas de Resend/Upstash, remetente autorizado/domínio verificado, URLs reais e segredo compartilhado nos dois projetos Vercel. A instituição deve revisar o tratamento e retenção de mensagens no provedor e na equipe; não foi presumido prazo ou conformidade legal. Não ativar rastreamento de abertura/cliques sem uma decisão institucional. Nenhum push, deploy ou envio real foi feito nesta etapa.
+
+Fontes: [Resend Send Email](https://resend.com/docs/api-reference/emails/send-email), [domínios verificados](https://resend.com/docs/dashboard/domains/introduction), [Express na Vercel](https://vercel.com/docs/frameworks/backend/express), [Upstash REST](https://upstash.com/docs/redis/features/restapi).
